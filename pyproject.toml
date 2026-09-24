@@ -1,0 +1,66 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "sentinel_dot"
+dynamic = ["version"]
+description = "Tamper-evident action logs for AI agents: hash-chained, HMAC or Ed25519 signed, Bitcoin-anchored via OpenTimestamps."
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.9"
+authors = [{ name = "Harley Cameron" }]
+keywords = ["ai-agents", "audit-log", "tamper-evident", "hash-chain", "hmac", "ai-safety", "provenance", "ed25519", "bitcoin", "opentimestamps"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Information Technology",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Operating System :: MacOS",
+  "Operating System :: POSIX",
+  "Topic :: Security",
+  "Topic :: Security :: Cryptography",
+  "Topic :: System :: Logging",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+  "Typing :: Typed",
+]
+dependencies = []
+
+[project.optional-dependencies]
+ed25519 = ["cryptography>=41"]
+bitcoin = ["opentimestamps-client>=0.7"]
+all = ["cryptography>=41", "opentimestamps-client>=0.7"]
+dev = ["pytest>=7", "cryptography>=41", "opentimestamps-client>=0.7", "build>=1.2", "twine>=6"]
+
+[project.scripts]
+sentinel_dot = "sentinel_dot.cli:main"
+sentinel-dot = "sentinel_dot.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/harleycameron-rgb/sentinel_dot"
+Documentation = "https://github.com/harleycameron-rgb/sentinel_dot#readme"
+Changelog = "https://github.com/harleycameron-rgb/sentinel_dot/blob/main/CHANGELOG.md"
+Issues = "https://github.com/harleycameron-rgb/sentinel_dot/issues"
+
+[tool.hatch.version]
+path = "src/sentinel_dot/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/sentinel_dot"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/sentinel_dot", "tests", "docs", "README.md", "CHANGELOG.md", "LICENSE", "pyproject.toml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "tests"]
+markers = ["network: needs internet (OpenTimestamps calendars / block explorers)"]
+addopts = "-m 'not network'"

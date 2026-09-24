@@ -1,0 +1,47 @@
+# Publishes to PyPI when a GitHub Release is published, using Trusted Publishing (no API tokens).
+# One-time setup: see RELEASING.md.
+name: publish
+on:
+  release: { types: [published] }
+  workflow_dispatch:
+    inputs:
+      target: { description: "testpypi or pypi", default: testpypi, required: true }
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -e ".[dev]"
+      - run: pytest -q
+      - name: Check tag matches version
+        if: github.event_name == 'release'
+        run: |
+          V=$(python -c "import sentinel_dot; print(sentinel_dot.__version__)")
+          [ "${GITHUB_REF_NAME#v}" = "$V" ] || { echo "tag $GITHUB_REF_NAME != version $V"; exit 1; }
+      - run: python -m build
+      - run: twine check --strict dist/*
+      - uses: actions/upload-artifact@v4
+        with: { name: dist, path: dist/ }
+  testpypi:
+    needs: build
+    if: github.event_name == 'workflow_dispatch' && inputs.target == 'testpypi'
+    runs-on: ubuntu-latest
+    environment: testpypi
+    permissions: { id-token: write }
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: dist, path: dist/ }
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with: { repository-url: "https://test.pypi.org/legacy/" }
+  pypi:
+    needs: build
+    if: github.event_name == 'release' || inputs.target == 'pypi'
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions: { id-token: write }
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: dist, path: dist/ }
+      - uses: pypa/gh-action-pypi-publish@release/v1
