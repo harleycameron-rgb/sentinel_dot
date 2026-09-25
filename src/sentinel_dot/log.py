@@ -38,10 +38,14 @@ REQUIRED_FIELDS = [
 ]
 VALID_MSG_TYPES = {"action", "rejection", "round_boundary", "malformed_rejection"}
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
-_HEX128 = re.compile(r"^[0-9a-f]{128}$")
+_HEX = re.compile(r"^[0-9a-f]+$")
+# Signature algorithms (see signing.py) -> signature length in hex chars.
+SIGNATURE_HEX_LEN = {"ed25519": 128, "ml-dsa-44": 4840, "ml-dsa-65": 6618, "ml-dsa-87": 9254,
+                     "hybrid-ed25519-ml-dsa-65": 6746}
+_KEY_ID_RE = re.compile(r"^(" + "|".join(map(re.escape, SIGNATURE_HEX_LEN)) + r"):[0-9a-f]{16}$")
 # Optional fields: excluded from entry_hash (like entry_hash itself).
-#   signature: Ed25519 signature (hex) over the entry_hash ASCII string
-#   key_id:    identifier of the signing public key ("ed25519:<16 hex>")
+#   signature: public-key signature (hex) over the entry_hash ASCII string
+#   key_id:    "<alg>:<16 hex>" -- ed25519, ml-dsa-44/65/87 or hybrid-ed25519-ml-dsa-65
 OPTIONAL_FIELDS = ["signature", "key_id"]
 _UNHASHED = {"entry_hash", "signature", "key_id"}
 
@@ -99,12 +103,21 @@ def validate_schema(entry: Dict[str, Any]) -> List[str]:
                if f not in REQUIRED_FIELDS and f not in OPTIONAL_FIELDS]
     if ("signature" in entry) != ("key_id" in entry):
         errors.append("signature and key_id must appear together")
-    if "signature" in entry and (not isinstance(entry["signature"], str)
-                                 or not _HEX128.match(entry["signature"])):
-        errors.append("signature must be 128 lowercase hex chars")
-    if "key_id" in entry and (not isinstance(entry["key_id"], str)
-                              or not re.match(r"^ed25519:[0-9a-f]{16}$", entry["key_id"])):
-        errors.append("key_id must be 'ed25519:<16 hex>'")
+    kid = entry.get("key_id")
+    alg = None
+    if "key_id" in entry:
+        m = _KEY_ID_RE.match(kid) if isinstance(kid, str) else None
+        if not m:
+            errors.append("key_id must be '<alg>:<16 hex>' with alg in "
+                          + ", ".join(SIGNATURE_HEX_LEN))
+        else:
+            alg = m.group(1)
+    if "signature" in entry:
+        sig = entry["signature"]
+        if not isinstance(sig, str) or not _HEX.match(sig):
+            errors.append("signature must be lowercase hex")
+        elif alg and len(sig) != SIGNATURE_HEX_LEN[alg]:
+            errors.append(f"signature for {alg} must be {SIGNATURE_HEX_LEN[alg]} hex chars")
     if any(e.startswith("missing") for e in errors):
         return errors
 
@@ -172,11 +185,12 @@ class AppendOnlyLog:
                  signer: Any = None):
         """Choose ONE authentication mode:
           key=<bytes>     HMAC-SHA256 entry hashes (writer and verifier share the secret)
-          signer=<Signer> plain SHA-256 entry hashes + Ed25519 signature per entry; auditors
+          signer=<Signer> plain SHA-256 entry hashes + public-key signature per entry (Ed25519,
+                          ML-DSA or hybrid); auditors
                           verify with the public key only and cannot forge
           neither         plain SHA-256 (accident detection only)"""
         if key is not None and signer is not None:
-            raise LogError("use either key (HMAC) or signer (Ed25519), not both: auditors "
+            raise LogError("use either key (HMAC) or signer (public-key), not both: auditors "
                            "without the HMAC key could not bind signatures to content")
         self.path = path
         self.key = key

@@ -129,7 +129,9 @@ Never derive the key from a password, a hostname, or anything in the repo.
 
 The HMAC key is symmetric: **anyone who can verify can also forge**. Limit it to the permission engine / log writer and the auditors you trust to write. If verifiers must not be able to write (e.g. third-party auditors), use Ed25519 mode (next section).
 
-### Ed25519 mode (independent auditors)
+### Public-key mode (independent auditors)
+
+Everything below applies to every public-key algorithm: `ed25519`, `ml-dsa-44/65/87` and `hybrid`. Generate other algorithms with `sentinel_dot keygen --signing writer --alg ml-dsa-65` (or `hybrid`). ML-DSA needs `cryptography >= 48`.
 
 - Generate: `sentinel_dot keygen --ed25519 writer` creates `writer.key` (PKCS#8, mode 0600, refuses to overwrite) and `writer.pub`. Set `SENTINEL_DOT_SIGNING_PASSWORD` first to encrypt the private key.
 - The writer loads `Ed25519Signer.from_file("writer.key")`. The private key belongs in the same secret manager as an HMAC key would.
@@ -137,6 +139,15 @@ The HMAC key is symmetric: **anyone who can verify can also forge**. Limit it to
 - Migrate legacy logs straight into signed form: `sentinel_dot migrate old.jsonl new.jsonl --signing-key writer.key`, then verify with `sentinel_dot verify new.jsonl --pubkey writer.pub`.
 - Rotation works the same as for HMAC (new segment per key). Each segment verifies only with its own public key. Publish old public keys permanently; they're not secret.
 - Compromise: an attacker with the private key can re-sign any unanchored history. Bitcoin anchors (section 6) bound the damage: anchored heads can't be changed.
+### Moving to post-quantum signatures
+
+1. Generate a `hybrid` or `ml-dsa-65` key. Hybrid is the safer choice while ML-DSA is new, because Ed25519 still protects you if an ML-DSA flaw is found.
+2. At a `round_boundary`, close the Ed25519 segment and anchor its head (ideally to Bitcoin).
+3. Start the new segment with the PQ key. Its first `round_boundary` should record the previous segment's head and `key_id`.
+4. Keep the old Ed25519 public key so the old segment can still be verified.
+5. For history that must be PQ-signed as well, migrate a verified copy of the old segment with `--signing-key` pointing at the PQ key. Every hash in the copy changes, so keep the original and record the mapping (section 3).
+
+The old Ed25519 segment is still protected by its Bitcoin anchor even if Ed25519 is later broken, because the anchor relies only on SHA-256.
 
 ### Rotation
 

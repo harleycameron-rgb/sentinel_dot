@@ -2,13 +2,13 @@
 
 **Tamper-evident action logs for AI agents.** Every tool call, result, refusal and round boundary your agent produces is written to an append-only JSONL file, chained with HMAC-SHA256. If anyone edits, deletes, reorders or forges an entry — or silently truncates the log — verification fails and tells you exactly where.
 
-Core has zero dependencies (pure Python ≥ 3.9). Optional extras: `ed25519` (independent auditors) and `bitcoin` (OpenTimestamps anchoring).
+Core has zero dependencies (pure Python ≥ 3.9). Optional extras: `ed25519` (independent auditors), `pq` (post-quantum ML-DSA) and `bitcoin` (OpenTimestamps anchoring).
 
 ## Why
 
 When an agent moves money, edits code, sends email or touches production, you need to answer *"what exactly did it do, and has this record been altered?"* Ordinary logs can be rewritten by anyone with file access. sentinel_dot gives you:
 
-- **Forgery resistance** — entries are HMAC-signed, or Ed25519-signed so **independent auditors verify with a public key and cannot forge**.
+- **Forgery resistance** — entries are HMAC-signed, or public-key signed (Ed25519, **post-quantum ML-DSA**, or a hybrid of both) so **independent auditors verify with a public key and cannot forge**.
 - **Bitcoin-anchored history** — log heads are timestamped into Bitcoin via OpenTimestamps, so even the key holder cannot later rewrite anchored history undetected.
 - **Truncation detection** — anchor the head `(next_seq, hash)` outside the log; deleted tail entries are caught.
 - **Crash safety** — exclusive file lock, `fsync` on every write, torn final lines detected (and optionally repaired).
@@ -19,7 +19,8 @@ When an agent moves money, edits code, sends email or touches production, you ne
 
 ```bash
 pip install sentinel_dot              # core (also: pip install sentinel-dot)
-pip install "sentinel_dot[ed25519]"   # + auditor signatures
+pip install "sentinel_dot[ed25519]"   # + auditor signatures (Ed25519)
+pip install "sentinel_dot[pq]"        # + post-quantum ML-DSA and hybrid (cryptography >= 48)
 pip install "sentinel_dot[all]"       # + Bitcoin anchoring
 # from source
 pip install -e ".[dev]"
@@ -82,6 +83,39 @@ sentinel_dot verify agent.jsonl --pubkey writer.pub --expect-seq 42 --expect-has
 ```
 
 In signing mode `entry_hash` is plain SHA-256 (so auditors can recompute it) and each entry carries `signature` (Ed25519 over `entry_hash`) and `key_id`. HMAC and Ed25519 modes are mutually exclusive. Detected: content edits, re-hashed chains without the private key, another key's signatures, spoofed `key_id`, stripped signatures.
+
+## Post-quantum signatures (ML-DSA)
+
+Ed25519 is secure today, but a large enough quantum computer could forge its signatures. Logs are often kept for years, so sentinel_dot also supports **ML-DSA** (FIPS 204, the NIST post-quantum signature standard), and a **hybrid** mode that needs both signatures to verify.
+
+| `--alg` | Security | Signature | Entry size* | Use when |
+|---|---|---|---|---|
+| `ed25519` | classical | 64 B | ~0.5 KB | Short-lived logs, smallest files |
+| `ml-dsa-44` | post-quantum, NIST category 2 | 2,420 B | ~5 KB | PQ at the lowest cost |
+| `ml-dsa-65` | post-quantum, NIST category 3 | 3,309 B | ~7 KB | Recommended PQ default |
+| `ml-dsa-87` | post-quantum, NIST category 5 | 4,627 B | ~10 KB | Highest assurance |
+| `hybrid` | Ed25519 **and** ML-DSA-65 | 3,373 B | ~7 KB | Long-lived audit trails during the PQ transition |
+
+\*Signatures are stored as hex, so they take twice their byte size on disk. On a typical machine ML-DSA-65 signs in about 1 ms and verifies in about 0.2 ms.
+
+```bash
+sentinel_dot keygen --signing writer --alg hybrid       # writer.key (0600) + writer.pub
+sentinel_dot verify agent.jsonl --pubkey writer.pub     # algorithm detected from the key
+sentinel_dot migrate old.jsonl new.jsonl --signing-key writer.key
+```
+
+```python
+from sentinel_dot import AgentRecorder, load_signer
+rec = AgentRecorder("agent.jsonl", agent_id="planner", signer=load_signer("writer.key"))
+```
+
+How it works:
+
+- **Hybrid keys:** the `key_id` names the algorithm (for example `ml-dsa-65:3f9a…` or `hybrid-ed25519-ml-dsa-65:…`), and the key files contain two PEM blocks. A hybrid signature is the Ed25519 signature followed by the ML-DSA-65 signature. **Both must verify.** Forging one needs breaking Ed25519 *and* ML-DSA, and an auditor holding only the Ed25519 half can't be tricked into accepting a hybrid log.
+- **Domain separation:** ML-DSA signs with the FIPS 204 context string `sentinel_dot/entry/v1`, so a signature made for another application can't be replayed here. Ed25519 signing is unchanged from 0.2, and existing signed logs keep verifying.
+- **Size checks:** each signature must be exactly the right length for its algorithm, which is checked before any cryptography runs.
+- **Mixing algorithms:** one log uses one key. To switch algorithms, start a new segment (see key rotation in `docs/MIGRATION.md`) or migrate.
+- **Bitcoin anchoring:** anchors rely only on hashes (SHA-256), so they're unaffected by quantum attacks on signatures. Together, ML-DSA signing and Bitcoin anchoring leave no quantum-vulnerable step in the chain of evidence.
 
 ## Bitcoin anchoring (OpenTimestamps)
 
@@ -215,6 +249,7 @@ Tested against the official OpenTimestamps example proof, it confirms Bitcoin bl
 | Deleted / inserted / reordered entry | `seq_mismatch`, `prev_hash_mismatch` |
 | Tail truncation | `head_mismatch` (needs anchored head) |
 | Full rewrite without key | `entry_hash_mismatch` / `signature_invalid` |
+| One half of a hybrid signature forged | `signature_invalid` |
 | Rewrite by the key holder, re-signed | `anchored_hash_mismatch` (Bitcoin anchor) |
 | Truncation below an anchored head | `anchored_entries_missing` |
 | Crash mid-write | `torn_final_line` / `TornWriteError` |
@@ -222,7 +257,8 @@ Tested against the official OpenTimestamps example proof, it confirms Bitcoin bl
 
 ## Threat model and limits
 
-- HMAC is symmetric: **anyone holding the key can forge**. Use Ed25519 when auditors must not be able to write.
+- HMAC is symmetric: **anyone holding the key can forge**. Use public-key signing when auditors must not be able to write.
+- Ed25519 is not quantum-resistant. For logs that must stay trustworthy for years, use `ml-dsa-65` or `hybrid`.
 - Anyone holding the private key can rewrite and re-sign **unanchored** entries. Only history covered by a confirmed Bitcoin anchor is protected from the key holder.
 - Anchors prove "no later than", not "no earlier than". Confirmation normally takes a few hours.
 - The log proves integrity of *what was recorded*, not that the agent recorded everything. Wrap every side-effecting tool.
