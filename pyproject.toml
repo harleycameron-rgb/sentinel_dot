@@ -11,7 +11,7 @@ license = "Apache-2.0"
 license-files = ["LICENSE"]
 requires-python = ">=3.9"
 authors = [{ name = "Harley Cameron" }]
-keywords = ["ai-agents", "audit-log", "tamper-evident", "hash-chain", "hmac", "ai-safety", "provenance", "ed25519", "bitcoin", "opentimestamps"]
+keywords = ["ai-agents", "audit-log", "tamper-evident", "hash-chain", "hmac", "ai-safety", "provenance", "ed25519", "ml-dsa", "post-quantum", "fips-204", "bitcoin", "opentimestamps"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",
@@ -36,9 +36,10 @@ dependencies = []
 
 [project.optional-dependencies]
 ed25519 = ["cryptography>=41"]
+pq = ["cryptography>=48"]
 bitcoin = ["opentimestamps-client>=0.7"]
-all = ["cryptography>=41", "opentimestamps-client>=0.7"]
-dev = ["pytest>=7", "cryptography>=41", "opentimestamps-client>=0.7", "build>=1.2", "twine>=6"]
+all = ["cryptography>=48", "opentimestamps-client>=0.7"]
+dev = ["pytest>=7", "cryptography>=48", "opentimestamps-client>=0.7", "build>=1.2", "twine>=6"]
 
 [project.scripts]
 sentinel_dot = "sentinel_dot.cli:main"
